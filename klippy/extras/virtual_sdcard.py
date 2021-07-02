@@ -35,6 +35,9 @@ class VirtualSD:
         self.gcode.register_command(
             "SDCARD_PRINT_FILE", self.cmd_SDCARD_PRINT_FILE,
             desc=self.cmd_SDCARD_PRINT_FILE_help)
+        self.gcode.register_command(
+            "SDCARD_PRINT_FILE_DRY", self.cmd_SDCARD_PRINT_FILE_DRY,
+            desc=self.cmd_SDCARD_PRINT_FILE_DRY_help)
     def handle_shutdown(self):
         if self.work_timer is not None:
             self.must_pause_work = True
@@ -108,6 +111,13 @@ class VirtualSD:
         self.must_pause_work = False
         self.work_timer = self.reactor.register_timer(
             self.work_handler, self.reactor.NOW)
+    def do_resume_dry(self):
+        if self.work_timer is not None:
+            raise self.gcode.error("SD busy")
+        self.must_pause_work = False
+        self.work_timer = self.reactor.register_timer(
+            self.work_handler_dry, self.reactor.NOW)
+
     def do_cancel(self):
         if self.current_file is not None:
             self.do_pause()
@@ -143,6 +153,17 @@ class VirtualSD:
             filename = filename[1:]
         self._load_file(gcmd, filename, check_subdirs=True)
         self.do_resume()
+    cmd_SDCARD_PRINT_FILE_DRY_help = "Loads a SD file and starts the dry print (no heat, no extrusion).  May "\
+        "include files in subdirectories."
+    def cmd_SDCARD_PRINT_FILE_DRY(self, gcmd):
+        if self.work_timer is not None:
+            raise gcmd.error("SD busy")
+        self._reset_file()
+        filename = gcmd.get("FILENAME")
+        if filename[0] == '/':
+            filename = filename[1:]
+        self._load_file(gcmd, filename, check_subdirs=True)
+        self.do_resume_dry()
     def cmd_M20(self, gcmd):
         # List SD card
         files = self.get_file_list()
@@ -218,7 +239,7 @@ class VirtualSD:
 
 
 # TODO: put harcoded list of commands into config file 
-    def is_heater_command(line)
+    def is_heater_command(line):
         # remove leading whitespaces
         line = line.strip()
         # remove comments
