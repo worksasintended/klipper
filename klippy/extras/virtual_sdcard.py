@@ -215,6 +215,106 @@ class VirtualSD:
         self.next_file_position = pos
     def is_cmd_from_sd(self):
         return self.cmd_from_sd
+
+
+# TODO: put harcoded list of commands into config file 
+    def is_heater_command(line)
+        # remove leading whitespaces
+        line = line.strip()
+        # remove comments
+        cpos = line.find(';')
+        if cpos >= 0:
+           line = line[:cpos]
+        cmd = line.split()[0]
+        heater_commands = ["M104", "M109", "M140", "M141", "M190", "M191", "M143", "M193", "TEMPERATURE_WAIT"]
+        if any(cmd in strg for strg in heater_commands)
+            return true
+        return false
+                
+
+
+# work_handler with additional check for heater commands
+# TODO: get rid of all the copy and paste
+    def work_handler_dry(self, eventtime):
+        logging.info("Starting SD card dry print (position %d)", self.file_position)
+        self.reactor.unregister_timer(self.work_timer)
+        try:
+            self.current_file.seek(self.file_position)
+        except:
+            logging.exception("virtual_sdcard seek")
+            self.work_timer = None
+            return self.reactor.NEVER
+        self.print_stats.note_start()
+        gcode_mutex = self.gcode.get_mutex()
+        partial_input = ""
+        lines = []
+        error_message = None
+        while not self.must_pause_work:
+            if not lines:
+                # Read more data
+                try:
+                    data = self.current_file.read(8192)
+                except:
+                    logging.exception("virtual_sdcard read")
+                    break
+                if not data:
+                    # End of file
+                    self.current_file.close()
+                    self.current_file = None
+                    logging.info("Finished SD card print")
+                    self.gcode.respond_raw("Done printing file")
+                    break
+                lines = data.split('\n')
+                lines[0] = partial_input + lines[0]
+                partial_input = lines.pop()
+                lines.reverse()
+                self.reactor.pause(self.reactor.NOW)
+                continue
+            # Pause if any other request is pending in the gcode class
+            if gcode_mutex.test():
+                self.reactor.pause(self.reactor.monotonic() + 0.100)
+                continue
+            # Dispatch command
+            self.cmd_from_sd = True
+            line = lines.pop()
+            next_file_position = self.file_position + len(line) + 1
+            self.next_file_position = next_file_position
+            try:
+                if self.is_heater_command(line)
+                    logging.info("ignore heater command in dry run")
+                else
+                    self.gcode.run_script(line)
+            except self.gcode.error as e:
+                error_message = str(e)
+                break
+            except:
+                logging.exception("virtual_sdcard dispatch")
+                break
+            self.cmd_from_sd = False
+            self.file_position = self.next_file_position
+            # Do we need to skip around?
+            if self.next_file_position != next_file_position:
+                try:
+                    self.current_file.seek(self.file_position)
+                except:
+                    logging.exception("virtual_sdcard seek")
+                    self.work_timer = None
+                    return self.reactor.NEVER
+                lines = []
+                partial_input = ""
+        logging.info("Exiting SD card print (position %d)", self.file_position)
+        self.work_timer = None
+        self.cmd_from_sd = False
+        if error_message is not None:
+            self.print_stats.note_error(error_message)
+        elif self.current_file is not None:
+            self.print_stats.note_pause()
+        else:
+            self.print_stats.note_complete()
+        return self.reactor.NEVER
+
+
+
     # Background work timer
     def work_handler(self, eventtime):
         logging.info("Starting SD card print (position %d)", self.file_position)
